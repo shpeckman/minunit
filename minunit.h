@@ -41,11 +41,11 @@ extern "C" {
 #error "Unable to define timers for an unknown OS."
 #endif
 
-#define COLORIZE_SHORT_NAMES
-#include <colorize.h>
-
 #include <math.h>
 #include <stdio.h>
+
+#define COLORIZE_SHORT_NAMES
+#include <colorize.h>
 
 #define MINUNIT_MESSAGE_LEN 1024
 #define MINUNIT_EPSILON 1E-12
@@ -58,6 +58,9 @@ static int minunit_status = 0;
 static double minunit_real_timer = 0;
 static double minunit_proc_timer = 0;
 
+static const char *minunit_fail_file = NULL;
+static const char *minunit_fail_func = NULL;
+static int minunit_fail_line = 0;
 static char minunit_last_message[MINUNIT_MESSAGE_LEN];
 
 static void (*minunit_setup)(void) = NULL;
@@ -85,16 +88,23 @@ static void (*minunit_teardown)(void) = NULL;
       } if (minunit_setup) (*minunit_setup)();                                 \
       minunit_status = 0; test(); minunit_run++; if (minunit_status) {         \
         minunit_fail++;                                                        \
-        (void)colorize_printf(FG_RED | BOLD, "F");                             \
-        (void)colorize_printf(FG_RED, "\n%s\n", minunit_last_message);         \
+        (void)colorize_printf(FG_RED | BOLD, "\n[%s] ", minunit_fail_func);    \
+        (void)colorize_printf(DIM, "%s:%d\n", minunit_fail_file,               \
+                              minunit_fail_line);                              \
+        (void)colorize_printf(FG_RED, "  => %s\n", minunit_last_message);      \
       }(void)fflush(stdout);                                                   \
       if (minunit_teardown)(*minunit_teardown)();)
 
 #define MU_REPORT()                                                            \
   MU__SAFE_BLOCK(                                                              \
       double minunit_end_real_timer; double minunit_end_proc_timer;            \
-      colorize_style_t status_style = minunit_fail > 0 ? FG_RED | BOLD : FG_GREEN | BOLD; \
-      (void)colorize_printf(status_style, "\n\n%d tests, %d assertions, %d failures\n", minunit_run, \
+      printf("\n\n");                                                          \
+      if (minunit_fail > 0) {                                                  \
+        (void)colorize_printf(FG_RED | BOLD, "  FAIL  ");                      \
+      } else {                                                                 \
+        (void)colorize_printf(FG_GREEN | BOLD, "  PASS  ");                    \
+      }                                                                        \
+      printf(" %d tests, %d assertions, %d failures\n", minunit_run,           \
              minunit_assert, minunit_fail);                                    \
       minunit_end_real_timer = mu_timer_real();                                \
       minunit_end_proc_timer = mu_timer_cpu();                                 \
@@ -106,26 +116,30 @@ static void (*minunit_teardown)(void) = NULL;
 #define mu_check(test)                                                         \
   MU__SAFE_BLOCK(                                                              \
       minunit_assert++; if (!(test)) {                                         \
+        minunit_fail_func = __func__;                                          \
+        minunit_fail_file = __FILE__;                                          \
+        minunit_fail_line = __LINE__;                                          \
         (void)snprintf(minunit_last_message, MINUNIT_MESSAGE_LEN,              \
-                       "%s failed:\n\t%s:%d: %s", __func__, __FILE__,          \
-                       __LINE__, #test);                                       \
+                       "Assertion failed: %s", #test);                         \
         minunit_status = 1;                                                    \
         return;                                                                \
       } else { (void)colorize_printf(FG_GREEN, "."); })
 
 #define mu_fail(message)                                                       \
-  MU__SAFE_BLOCK(minunit_assert++;                                             \
+  MU__SAFE_BLOCK(minunit_assert++; minunit_fail_func = __func__;               \
+                 minunit_fail_file = __FILE__; minunit_fail_line = __LINE__;   \
                  (void)snprintf(minunit_last_message, MINUNIT_MESSAGE_LEN,     \
-                                "%s failed:\n\t%s:%d: %s", __func__, __FILE__, \
-                                __LINE__, message);                            \
+                                "Forced failure: %s", message);                \
                  minunit_status = 1; return;)
 
 #define mu_assert(test, message)                                               \
   MU__SAFE_BLOCK(                                                              \
       minunit_assert++; if (!(test)) {                                         \
+        minunit_fail_func = __func__;                                          \
+        minunit_fail_file = __FILE__;                                          \
+        minunit_fail_line = __LINE__;                                          \
         (void)snprintf(minunit_last_message, MINUNIT_MESSAGE_LEN,              \
-                       "%s failed:\n\t%s:%d: %s", __func__, __FILE__,          \
-                       __LINE__, message);                                     \
+                       "Assertion failed: %s", message);                       \
         minunit_status = 1;                                                    \
         return;                                                                \
       } else { (void)colorize_printf(FG_GREEN, "."); })
@@ -135,9 +149,11 @@ static void (*minunit_teardown)(void) = NULL;
       int minunit_tmp_e; int minunit_tmp_r; minunit_assert++;                  \
       minunit_tmp_e = (expected); minunit_tmp_r = (result);                    \
       if (minunit_tmp_e != minunit_tmp_r) {                                    \
+        minunit_fail_func = __func__;                                          \
+        minunit_fail_file = __FILE__;                                          \
+        minunit_fail_line = __LINE__;                                          \
         (void)snprintf(minunit_last_message, MINUNIT_MESSAGE_LEN,              \
-                       "%s failed:\n\t%s:%d: %d expected but was %d",          \
-                       __func__, __FILE__, __LINE__, minunit_tmp_e,            \
+                       "Expected: %d\n     Actual:   %d", minunit_tmp_e,       \
                        minunit_tmp_r);                                         \
         minunit_status = 1;                                                    \
         return;                                                                \
@@ -149,9 +165,11 @@ static void (*minunit_teardown)(void) = NULL;
       minunit_tmp_e = (expected); minunit_tmp_r = (result);                    \
       if (fabs(minunit_tmp_e - minunit_tmp_r) > MINUNIT_EPSILON) {             \
         int minunit_significant_figures = 1 - log10(MINUNIT_EPSILON);          \
+        minunit_fail_func = __func__;                                          \
+        minunit_fail_file = __FILE__;                                          \
+        minunit_fail_line = __LINE__;                                          \
         (void)snprintf(minunit_last_message, MINUNIT_MESSAGE_LEN,              \
-                       "%s failed:\n\t%s:%d: %.*g expected but was %.*g",      \
-                       __func__, __FILE__, __LINE__,                           \
+                       "Expected: %.*g\n     Actual:   %.*g",                  \
                        minunit_significant_figures, minunit_tmp_e,             \
                        minunit_significant_figures, minunit_tmp_r);            \
         minunit_status = 1;                                                    \
@@ -167,9 +185,11 @@ static void (*minunit_teardown)(void) = NULL;
       } if (!minunit_tmp_r) {                                                  \
         minunit_tmp_r = "<null pointer>";                                      \
       } if (strcmp(minunit_tmp_e, minunit_tmp_r) != 0) {                       \
+        minunit_fail_func = __func__;                                          \
+        minunit_fail_file = __FILE__;                                          \
+        minunit_fail_line = __LINE__;                                          \
         (void)snprintf(minunit_last_message, MINUNIT_MESSAGE_LEN,              \
-                       "%s failed:\n\t%s:%d: '%s' expected but was '%s'",      \
-                       __func__, __FILE__, __LINE__, minunit_tmp_e,            \
+                       "Expected: '%s'\n     Actual:   '%s'", minunit_tmp_e,   \
                        minunit_tmp_r);                                         \
         minunit_status = 1;                                                    \
         return;                                                                \
